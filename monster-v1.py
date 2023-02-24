@@ -56,6 +56,9 @@ def run_upload():
     fastest_time = float("inf")
     if args.threads == 1:
         testfile = testfile_filename
+        # Record this as the start time, since we already have a file
+        start_time = time.monotonic()
+        # Upload the file
         transfer_time = upload_thread(0, testfile)
         if transfer_time is not None:
             slowest_time = transfer_time
@@ -65,26 +68,23 @@ def run_upload():
             threads.append(Thread(target=generate_testfile, args=[i]))
             threads[i].start()
         for i in range(args.threads):
-            # Wait for all threads to finish
             threads[i].join()
             # Record this as the start time, since we explicitly don't count file generation time
             start_time = time.monotonic()
             # Convert the thread number to zero padded format like 001, 002 etc
             thread_number_str = f"{i:03}"
             testfile = "testfile-" + thread_number_str + ".bin"
-            threads.append(Thread(target=upload_thread, args=[i, testfile]))
-            threads[args.threads + i].start()
-        for i in range(args.threads):
-            threads[args.threads + i].join()
-            transfer_time = upload_thread(i, "testfile-" + f"{i:03}" + ".bin")
+            transfer_time = upload_thread(i, testfile)
             if transfer_time is not None:
                 if transfer_time > slowest_time:
                     slowest_time = transfer_time
                 if transfer_time < fastest_time:
                     fastest_time = transfer_time
+
     end_time = time.monotonic()
     transfer_time = end_time - start_time
     return transfer_time, slowest_time, fastest_time
+
 
 def stop_gateway():
     if not args.silent:
@@ -147,7 +147,7 @@ def print_report(run_number, transfer_time, slowest_time, fastest_time):
     else:
         print("Filename: testfile-[threadid].bin")
         print(f"\nWe performed {args.threads} uploads across {args.threads} threads, {num_successes} of which succeeded.")
-        print(f"That's a success rate of { (num_successes / args.threads / args.continuous ) * 100:.2f}%.")
+        print(f"That's a success rate of { (num_successes / args.threads) * 100:.2f}%.")
     print(f"Data transferred: {total_data / 1024 / 1024:.2f} MiB")
     if args.threads > 1:
         print(f"Data successfully transferred: {total_data_success / 1024 / 1024:.2f} MiB")
