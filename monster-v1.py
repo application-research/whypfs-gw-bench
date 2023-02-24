@@ -28,7 +28,7 @@ def upload_thread(thread_num, testfile):
     global num_successes
     start_time = time.monotonic()
     result = subprocess.run(
-        ["curl", "-X", "POST", "-F", "file=@" + testfile + ".bin", "localhost:1313/upload"],
+        ["curl", "-X", "POST", "-F", "file=@" + testfile, "localhost:1313/upload"],
         capture_output=True, text=True)
     end_time = time.monotonic()
     transfer_time = end_time - start_time
@@ -68,7 +68,7 @@ def run_upload():
             threads[i].join()
             # Convert the thread number to zero padded format like 001, 002 etc
             thread_number_str = f"{i:03}"
-            testfile = "testfile-" + thread_number_str
+            testfile = "testfile-" + thread_number_str + ".bin"
             threads.append(Thread(target=upload_thread, args=[i, testfile]))
             threads[args.threads + i].start()
         for i in range(args.threads):
@@ -150,7 +150,8 @@ def print_report(run_number, transfer_time):
         print(f"That's a success rate of {num_successes/args.threads*100:.2f}%.")
 
     print(f"Data transferred: {total_data / 1024 / 1024:.2f} MiB")
-    print(f"Data successfully transferred: {total_data_success / 1024 / 1024:.2f} MiB")
+    if args.threads > 1:
+        print(f"Data successfully transferred: {total_data_success / 1024 / 1024:.2f} MiB")
     print(f"Transfer time: {transfer_time:.2f} seconds")
     print(f"Transfer rate: {mbps:.2f} mbps")
 
@@ -184,7 +185,7 @@ def run_continuous(num_runs):
         start_gateway()
         wait_for_server()
         transfer_time = run_upload()
-        print_report(i+1, transfer_time)
+        print_report(i+1, transfer_time[0])
         if args.report:
             save_report(i+1, transfer_time)
         total_data = real_file_size * 1024 * 1024
@@ -237,7 +238,7 @@ if __name__ == "__main__":
         start_gateway()
         wait_for_server()
         transfer_time = run_upload()
-        print_report(1, transfer_time)
+        print_report(1, transfer_time[0])
         if args.report:
             save_report(1, transfer_time)
     else:
