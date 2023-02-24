@@ -20,9 +20,8 @@ num_successes = 0
 def generate_testfile(thread_num):
     if not args.silent:
         print(f"Generating testfile for thread {thread_num}")
-    # Output it anyways
-    print(f"Generating testfile for thread {thread_num}")
     subprocess.run(["dd", "if=/dev/urandom", f"of=testfile-{thread_num:03}.bin", f"bs={args.blobsize}M", "count=1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 
 def upload_thread(thread_num, testfile):
     global num_successes
@@ -35,7 +34,9 @@ def upload_thread(thread_num, testfile):
     if result.returncode == 0:
         output = result.stdout.strip()
         if output.startswith("baf"):
+            # We successfully uploaded a file using this thread, record a victory!
             num_successes += 1
+            # If we're not in silent mode, output a helpful message.
             if not args.silent:
                 print(f"Thread {thread_num}: Upload succeeded, took {transfer_time:.2f} seconds end-to-end")
             return transfer_time
@@ -50,7 +51,6 @@ def upload_thread(thread_num, testfile):
 def run_upload():
     global num_successes
     num_successes = 0
-    start_time = time.monotonic()
     threads = []
     slowest_time = float("-inf")
     fastest_time = float("inf")
@@ -65,7 +65,10 @@ def run_upload():
             threads.append(Thread(target=generate_testfile, args=[i]))
             threads[i].start()
         for i in range(args.threads):
+            # Wait for all threads to finish
             threads[i].join()
+            # Record this as the start time, since we explicitly don't count file generation time
+            start_time = time.monotonic()
             # Convert the thread number to zero padded format like 001, 002 etc
             thread_number_str = f"{i:03}"
             testfile = "testfile-" + thread_number_str + ".bin"
@@ -73,9 +76,7 @@ def run_upload():
             threads[args.threads + i].start()
         for i in range(args.threads):
             threads[args.threads + i].join()
-            print("DEBUG")
-            print(threads)
-            transfer_time = threads[args.threads + i].result()
+            transfer_time = upload_thread(i, "testfile-" + f"{i:03}" + ".bin")
             if transfer_time is not None:
                 if transfer_time > slowest_time:
                     slowest_time = transfer_time
@@ -84,7 +85,6 @@ def run_upload():
     end_time = time.monotonic()
     transfer_time = end_time - start_time
     return transfer_time, slowest_time, fastest_time
-
 
 def stop_gateway():
     if not args.silent:
@@ -128,7 +128,7 @@ def wait_for_server():
             pass
 
 
-def print_report(run_number, transfer_time):
+def print_report(run_number, transfer_time, slowest_time, fastest_time):
     if args.threads == 1:
         total_data = real_file_size * 1024 * 1024
     else:
@@ -147,11 +147,12 @@ def print_report(run_number, transfer_time):
     else:
         print("Filename: testfile-[threadid].bin")
         print(f"\nWe performed {args.threads} uploads across {args.threads} threads, {num_successes} of which succeeded.")
-        print(f"That's a success rate of {num_successes/args.threads*100:.2f}%.")
-
+        print(f"That's a success rate of { (num_successes / args.threads / args.continuous ) * 100:.2f}%.")
     print(f"Data transferred: {total_data / 1024 / 1024:.2f} MiB")
     if args.threads > 1:
         print(f"Data successfully transferred: {total_data_success / 1024 / 1024:.2f} MiB")
+        print(f"Slowest thread: {slowest_time:.2f} seconds")
+        print(f"Fastest thread: {fastest_time:.2f} seconds")
     print(f"Transfer time: {transfer_time:.2f} seconds")
     print(f"Transfer rate: {mbps:.2f} mbps")
 
@@ -185,18 +186,25 @@ def run_continuous(num_runs):
         start_gateway()
         wait_for_server()
         transfer_time = run_upload()
-        print_report(i+1, transfer_time[0])
+        print_report(i+1, transfer_time[0], transfer_time[1], transfer_time[2])
         if args.report:
-            save_report(i+1, transfer_time)
+            save_report(i+1, transfer_time[0])
         total_data = real_file_size * 1024 * 1024
-        total_time += transfer_time
-        total_speed += total_data / transfer_time
-        if best_time is None or transfer_time < best_time:
+        total_time += transfer_time[0]
+        total_speed += total_data / transfer_time[0]
+        print(transfer_time[0])
+        if best_time is None:
+            best_time = transfer_time[0]
+            best_speed = total_data / transfer_time[0]
+        if transfer_time[0] < best_time:
             best_time = transfer_time
-            best_speed = total_data / transfer_time
-        if slowest_time is None or transfer_time > slowest_time:
-            slowest_time = transfer_time
-            slowest_speed = total_data / transfer_time
+            best_speed = total_data / transfer_time[0]
+        if slowest_time is None:
+            slowest_time = transfer_time[0]
+            slowest_speed = total_data / transfer_time[0]
+        if transfer_time[0] > slowest_time:
+            slowest_time = transfer_time[0]
+            slowest_speed = total_data / transfer_time[0]
     average_time = total_time / num_runs
     average_speed = total_speed / num_runs
 
@@ -206,17 +214,18 @@ def run_continuous(num_runs):
     transfer_rate = overall_data_transferred / total_time
     mbps = transfer_rate / 1024 / 1024 * 8
 
+    print(best_time)
     print(f"\n=== Final Report ===")
     print(f"We moved {overall_data_transferred_MiB}MiB in {round(total_time, 3):.2f} seconds")
     print(f"That's a transfer rate of {mbps:.2f} mbps.")
     print(f"\nWe performed {num_runs} total runs, {num_successes} of which succeeded.")
     print(f"That's a success rate of {num_successes/num_runs*100:.2f}%.")
-    print(f"\nBest time: {best_time:.2f} seconds")
-    print(f"Best speed: {best_speed / 1024 / 1024 * 8:.2f} mbps")
-    print(f"Slowest time: {slowest_time:.2f} seconds")
-    print(f"Slowest speed: {slowest_speed / 1024 / 1024 * 8:.2f} mbps")
-    print(f"Average time: {average_time:.2f} seconds")
-    print(f"Average speed: {average_speed / 1024 / 1024 * 8:.2f} mbps")
+    print(f"\nBest run time: {best_time:.2f} seconds")
+    print(f"Best run speed: {best_speed / 1024 / 1024 * 8:.2f} mbps")
+    print(f"Slowest run time: {slowest_time:.2f} seconds")
+    print(f"Slowest run speed: {slowest_speed / 1024 / 1024 * 8:.2f} mbps")
+    print(f"Average run time: {average_time:.2f} seconds")
+    print(f"Average run speed: {average_speed / 1024 / 1024 * 8:.2f} mbps")
 
 
 if __name__ == "__main__":
@@ -238,7 +247,7 @@ if __name__ == "__main__":
         start_gateway()
         wait_for_server()
         transfer_time = run_upload()
-        print_report(1, transfer_time[0])
+        print_report(1, transfer_time[0], transfer_time[1], transfer_time[2])
         if args.report:
             save_report(1, transfer_time)
     else:
