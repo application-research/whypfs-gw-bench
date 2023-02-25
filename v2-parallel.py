@@ -56,7 +56,7 @@ def run_upload(run_number):
         # Wait for final disk activity to settle
         time.sleep(1)
         # Wait for a file to appear telling this group of threads to run
-        while not os.path.exists("/mnt/mfs/trigger-" + str(run_number)):
+        while not os.path.exists("/tmp/trigger-" + str(run_number)):
             #print("looking for /mnt/mfs/trigger-" + str(run_number))
             time.sleep(0.04)
         # Record the start time
