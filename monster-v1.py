@@ -9,14 +9,7 @@ import sys
 import concurrent.futures
 from threading import Thread
 
-
-# Used if we're running as a single thread, otherwise random files are used
-testfile_filename = "why-random-50m"
-#testfile_filename = "ubuntu-22.04.1-desktop-amd64.iso"
-
-real_file_size = os.path.getsize(testfile_filename) / 1024 / 1024
 num_successes = 0
-
 
 def generate_testfile(thread_num):
     if not args.silent:
@@ -43,6 +36,7 @@ def upload_thread(thread_num, testfile):
             return transfer_time
         else:
             print(f"Error: Failed to upload file for thread {thread_num}.")
+            print(output)
     else:
         print(f"Error: Failed to run curl command for thread {thread_num}.")
         print(result)
@@ -81,6 +75,7 @@ def stop_gateway():
     if not args.silent:
         print("Stopping WhyPFS Gateway")
     subprocess.run(["sudo", "systemctl", "stop", "whypfs-gateway"])
+    subprocess.run(["sudo", "systemctl", "stop", "whypfs-gateway-seaweed"])
     time.sleep(1)
     status = subprocess.run(["sudo", "systemctl", "is-active", "--quiet", "whypfs-gateway"])
     if status.returncode == 0:
@@ -91,13 +86,20 @@ def stop_gateway():
 def start_gateway():
     if not args.silent:
         print("Starting WhyPFS Gateway")
-    subprocess.run(["sudo", "systemctl", "start", "whypfs-gateway"])
+    if args.label == "MooseFS":
+        subprocess.run(["sudo", "systemctl", "start", "whypfs-gateway"])
+    else:
+        subprocess.run(["sudo", "systemctl", "start", "whypfs-gateway-seaweed"])
 
 
 def remove_folder():
     if not args.silent:
-        print("Removing folder /mnt/mfs/.whypfs")
-    subprocess.run(["sudo", "rm", "-r", "/mnt/mfs/.whypfs"])
+        print("Removing folder .whypfs")
+    if args.label == "MooseFS":
+        subprocess.run(["sudo", "rm", "-r", "/mnt/mfs/.whypfs"])
+    else:
+        subprocess.run(["sudo", "rm", "-r", "/mnt/seaweedfs/.whypfs"])
+    
 
 
 def wait_for_server():
@@ -121,9 +123,9 @@ def wait_for_server():
 
 def print_report(run_number, transfer_time, slowest_time, fastest_time):
     if args.threads == 1:
-        total_data = real_file_size * 1024 * 1024
+        total_data = args.blobsize * 1024 * 1024
     else:
-        total_data = args.threads * real_file_size * 1024 * 1024
+        total_data = args.threads * args.blobsize * 1024 * 1024
     if args.threads > 1:
         total_data_success = total_data * (num_successes / args.threads)
     transfer_rate = total_data / transfer_time
@@ -134,7 +136,7 @@ def print_report(run_number, transfer_time, slowest_time, fastest_time):
         mbps = mbps * (num_successes / args.threads)
     print(f"\n=== Run {run_number} ===")
     if args.threads == 1:
-        print(f"Filename: " + testfile_filename)
+        print(f"Filename: testfile-000.bin")
     else:
         print("Filename: testfile-[threadid].bin")
         print(f"\nWe performed {args.threads} uploads across {args.threads} threads, {num_successes} of which succeeded.")
@@ -150,9 +152,9 @@ def print_report(run_number, transfer_time, slowest_time, fastest_time):
 
 def save_report(run_number, transfer_time, slowest_time, fastest_time):
     if args.threads == 1:
-        total_data = real_file_size * 1024 * 1024
+        total_data = args.blobsize * 1024 * 1024
     else:
-        total_data = args.threads * real_file_size * 1024 * 1024
+        total_data = args.threads * args.blobsize * 1024 * 1024
     if args.threads > 1:
         total_data_success = total_data * (num_successes / args.threads)
     transfer_rate = total_data / transfer_time
@@ -166,7 +168,7 @@ def save_report(run_number, transfer_time, slowest_time, fastest_time):
         report_file.write(f"\n=== Run {run_number} ===\n")
         
         if args.threads == 1:
-            report_file.write(f"Filename: " + testfile_filename)
+            report_file.write(f"Filename: testfile-000.bin")
         else:
             report_file.write("Filename: testfile-[threadid].bin")
             report_file.write(f"\nWe performed {args.threads} uploads across {args.threads} threads, {num_successes} of which succeeded.")
@@ -203,7 +205,7 @@ def run_continuous(num_runs):
         print_report(i+1, transfer_time[0], transfer_time[1], transfer_time[2])
         if args.report:
             save_report(i+1, transfer_time[0], transfer_time[1], transfer_time[2])
-        total_data = args.threads * real_file_size * 1024 * 1024
+        total_data = args.threads * args.blobsize * 1024 * 1024
         total_time += transfer_time[0]
         total_speed += total_data / transfer_time[0]
         if best_time is None:
@@ -222,7 +224,7 @@ def run_continuous(num_runs):
     average_speed = total_speed / num_runs
 
     # We calculate how much data transfer occurred by considering how much failed as well.
-    overall_data_transferred = (num_successes_total / (num_runs * args.threads)) * (num_runs * args.threads) * real_file_size * 1024 * 1024
+    overall_data_transferred = (num_successes_total / (num_runs * args.threads)) * (num_runs * args.threads) * args.blobsize * 1024 * 1024
     overall_data_transferred_MiB = overall_data_transferred / (1024 * 1024)
 
     transfer_rate = overall_data_transferred / total_time
@@ -246,24 +248,24 @@ def run_continuous(num_runs):
         print("Saving final report to disk...")
         report_file_name = f"report-{report_timestamp}-{args.label}-final.txt"
         report_file = open(report_file_name, 'w')
-        report_file.write(f"\n=== Final Report ===")
-        report_file.write(f"We moved {overall_data_transferred_MiB}MiB in {round(total_time, 3):.2f} seconds")
-        report_file.write(f"That's a transfer rate of {mbps:.2f} mbps.")
-        report_file.write(f"\nWe performed {num_runs * args.threads} transfers across {num_runs} total run(s), {num_successes_total} of which succeeded.")
-        report_file.write(f"That's a success rate of { (num_successes_total / (num_runs * args.threads)) *100:.2f}%.")
-        report_file.write(f"\nBest run time: {best_time:.2f} seconds")
-        report_file.write(f"Best run speed: {best_speed / 1024 / 1024 * 8:.2f} mbps")
-        report_file.write(f"Slowest run time: {slowest_time:.2f} seconds")
-        report_file.write(f"Slowest run speed: {slowest_speed / 1024 / 1024 * 8:.2f} mbps")
-        report_file.write(f"Average run time: {average_time:.2f} seconds")
-        report_file.write(f"Average run speed: {average_speed / 1024 / 1024 * 8:.2f} mbps")
+        report_file.write(f"\n=== Final Report ===\n")
+        report_file.write(f"We moved {overall_data_transferred_MiB}MiB in {round(total_time, 3):.2f} seconds\n")
+        report_file.write(f"That's a transfer rate of {mbps:.2f} mbps.\n")
+        report_file.write(f"\nWe performed {num_runs * args.threads} transfers across {num_runs} total run(s), {num_successes_total} of which succeeded.\n")
+        report_file.write(f"That's a success rate of { (num_successes_total / (num_runs * args.threads)) *100:.2f}%.\n")
+        report_file.write(f"\nBest run time: {best_time:.2f} seconds\n")
+        report_file.write(f"Best run speed: {best_speed / 1024 / 1024 * 8:.2f} mbps\n")
+        report_file.write(f"Slowest run time: {slowest_time:.2f} seconds\n")
+        report_file.write(f"Slowest run speed: {slowest_speed / 1024 / 1024 * 8:.2f} mbps\n")
+        report_file.write(f"Average run time: {average_time:.2f} seconds\n")
+        report_file.write(f"Average run speed: {average_speed / 1024 / 1024 * 8:.2f} mbps\n")
         report_file.close()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Test the performance of MooseFS with whyPFS gateway.")
+    parser = argparse.ArgumentParser(description="Test the performance of MooseFS with WhyPFS gateway.")
     parser.add_argument("-c", "--continuous", metavar="N", type=int, help="run continuously N times", default=1)
     parser.add_argument("-t", "--threads", metavar="T", type=int, help="run parallel threads * T", default=1)
-    parser.add_argument("-b", "--blobsize", type=int, help="size of file in MiB to generate using tests. ONLY used when multithreaded mode in use.", default=50)
+    parser.add_argument("-b", "--blobsize", type=int, help="size of file in MiB to generate", default=50)
     parser.add_argument("-r", "--report", help="produce reports", action=argparse.BooleanOptionalAction)
     parser.add_argument("-s", "--silent", help="run silently - only produce reports", action=argparse.BooleanOptionalAction)
     parser.add_argument("-l", "--label", help="label to use for reports", default="MooseFS")
