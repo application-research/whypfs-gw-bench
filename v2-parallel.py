@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Let's run everything in parallel this time
 
 import argparse
 import datetime
@@ -43,7 +44,7 @@ def upload_thread(thread_num, testfile):
     return None
 
 
-def run_upload():
+def run_upload(run_number):
     global num_successes
     num_successes = 0
     threads = []
@@ -54,6 +55,10 @@ def run_upload():
         executor.map(generate_testfile, range(args.threads))
         # Wait for final disk activity to settle
         time.sleep(1)
+        # Wait for a file to appear telling this group of threads to run
+        while not os.path.exists("/mnt/mfs/trigger-" + str(run_number)):
+            #print("looking for /mnt/mfs/trigger-" + str(run_number))
+            time.sleep(0.04)
         # Record the start time
         start_time = time.monotonic()
         # Upload files and record transfer times
@@ -195,11 +200,8 @@ def run_continuous(num_runs):
     total_speed = 0
     for i in range(num_runs):
         print(f"\nRunning test {i + 1}...")
-        stop_gateway()
-        remove_folder()
-        start_gateway()
         wait_for_server()
-        transfer_time = run_upload()
+        transfer_time = run_upload(i+1)
         # Grab the num_successes reported by our run of upload threads, and add it to the total number of successes.
         num_successes_total += transfer_time[3]
         print_report(i+1, transfer_time[0], transfer_time[1], transfer_time[2])
@@ -277,17 +279,7 @@ if __name__ == "__main__":
         report_file = open(args.report, "w")
         sys.stdout = report_file
 
-    if args.continuous == 1:
-        stop_gateway()
-        remove_folder()
-        start_gateway()
-        wait_for_server()
-        transfer_time = run_upload()
-        print_report(1, transfer_time[0], transfer_time[1], transfer_time[2])
-        if args.report:
-            save_report(1, transfer_time[0], transfer_time[1], transfer_time[2])
-    else:
-        run_continuous(args.continuous)
+    run_continuous(args.continuous)
 
     if args.report is not None:
         sys.stdout = sys.__stdout__
